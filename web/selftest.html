@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>selftest</title></head>
+<body><div id="result">RUNNING</div>
+<script src="modem73.js"></script>
+<script>
+// Headless self-test: encode -> decode loopback for OFDM + every MFSK mode.
+createModem73().then((Module) => {
+  const m = new Module.Modem();
+  const base = "Self-test MODEM73 in the browser ABCDEFGHIJ 0123456789";
+  function rt() {
+    const exp = base.slice(0, m.payloadSize());     // ASCII -> byte == code-unit
+    const pcm = m.encode(exp);
+    const stream = new Float32Array(4800 + pcm.length + 60000);
+    stream.set(pcm, 4800);
+    m.reset();
+    const fr = m.decode(stream);
+    return { ok: fr.length > 0 && fr[0].text === exp, n: fr.length,
+             snr: fr.length ? fr[0].snr.toFixed(1) : 'n/a', rx: fr.length ? fr[0].text : '' };
+  }
+  const out = [];
+  m.configure("WASM", 1500, "QPSK", "1/2", 1); out.push(["OFDM", rt()]);
+  const names = ["MFSK-8", "MFSK-16", "MFSK-32", "MFSK-32R"];
+  for (let k = 0; k < 4; k++) { m.configureMfsk(1500, k); out.push([names[k], rt()]); }
+  const allok = out.every(([, r]) => r.ok);
+  document.getElementById('result').textContent =
+    (allok ? "PASS" : "FAIL") + " " +
+    out.map(([n, r]) => `${n}:${r.ok ? 'ok' : 'BAD'}(snr=${r.snr})`).join(" ");
+}).catch((e) => {
+  document.getElementById('result').textContent = "ERROR " + e;
+});
+</script>
+</body></html>

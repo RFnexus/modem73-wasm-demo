@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MODEM73 WASM</title>
+</head>
+<body>
+
+
+<fieldset>
+  <legend>Config</legend>
+  <label>Family
+    <select id="family">
+      <option value="ofdm" selected>OFDM</option>
+      <option value="mfsk">MFSK</option>
+    </select></label>
+  <label>Center freq (Hz) <input id="cfreq" type="number" value="1500"></label>
+
+  <span id="ofdm-fields">
+    <label>Callsign <input id="callsign" value="WASM" maxlength="9"></label>
+    <label>Modulation
+      <select id="mod">
+        <option>BPSK</option><option selected>QPSK</option><option>8PSK</option>
+        <option>QAM16</option><option>QAM64</option><option>QAM256</option>
+        <option>QAM1024</option><option>QAM4096</option>
+      </select></label>
+    <label>Code rate
+      <select id="rate">
+        <option selected>1/2</option><option>2/3</option><option>3/4</option>
+        <option>5/6</option><option>1/4</option>
+      </select></label>
+    <label>Frame
+      <select id="frame">
+        <option value="0">short</option>
+        <option value="1" selected>normal</option>
+        <option value="2">long</option>
+      </select></label>
+  </span>
+
+  <span id="mfsk-fields" hidden>
+    <label>MFSK mode
+      <select id="mfsk">
+        <option value="0">MFSK-8</option>
+        <option value="1" selected>MFSK-16</option>
+        <option value="2">MFSK-32</option>
+        <option value="3">MFSK-32R</option>
+      </select></label>
+  </span>
+
+  <p><button id="apply">Apply</button> <span id="cfginfo"></span></p>
+  <p id="modeinfo"></p>
+</fieldset>
+
+<fieldset>
+  <legend>Transmit</legend>
+  <p>
+    <button id="lorem" type="button">Lorem ipsum</button>
+    <button id="loremfill" type="button">Fill frame</button>
+    <span id="loreminfo"></span>
+  </p>
+  <p><textarea id="msg" rows="3" cols="60">Hello from MODEM73 over WebAssembly</textarea></p>
+  <p>
+    <button id="loopback">Encode -> decode(loopback)</button>
+    <button id="play">Encode &amp; Play</button>
+    <button id="export">Export WAV</button>
+    <span id="txinfo"></span>
+  </p>
+</fieldset>
+
+<fieldset>
+  <legend>Receive</legend>
+  <p><button id="mic">Start microphone</button> <span id="status"></span></p>
+  <canvas id="waterfall" width="480" height="140"
+          style="display:block;width:480px;height:140px;background:#000;image-rendering:pixelated"></canvas>
+  <small id="wflegend">waterfall 0–4000 Hz · red lines mark the 2.4 kHz modem passband</small>
+  <p>
+    <label>Decode from file
+      <input id="file" type="file" accept="audio/wav,audio/x-wav,audio/mpeg,.wav,.mp3">
+    </label>
+    <span id="fileinfo"></span>
+  </p>
+</fieldset>
+
+<fieldset>
+  <legend>Link stats</legend>
+  <div id="stats">no frames decoded yet</div>
+  <p><button id="resetstats" type="button">Reset stats</button></p>
+</fieldset>
+
+<fieldset>
+  <legend>Decoded output</legend>
+  <div id="out"></div>
+  <p><button id="clear">Clear</button></p>
+</fieldset>
+
+<script src="modem73.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
