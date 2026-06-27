@@ -28,10 +28,133 @@ function logFrame(text, snr, source, ber, modBits) {
 }
 
 function logFrames(frames, source) {
-  for (const f of frames) logFrame(f.text, f.snr, source, f.ber, f.modBits);
+  for (const f of frames) routeRxFrame(f, source);
   updateStats();
 }
 function note(msg) { $('status').textContent = msg; }
+
+
+const MSG_PREFIX = 'M73:';
+const PING_PREFIX = 'PING:';
+
+function frameWithLength(bytes) {
+  const out = new Uint8Array(2 + bytes.length);
+  out[0] = (bytes.length >> 8) & 0xff;
+  out[1] = bytes.length & 0xff;
+  out.set(bytes, 2);
+  return out;
+}
+
+const hex = (bytes) =>
+  Array.from(bytes, (b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+
+const buildChatPayload = (callsign, text) => MSG_PREFIX + callsign + ':' + text;
+
+function parseChat(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= 4 ||
+      bytes[0] !== 0x4d || bytes[1] !== 0x37 || bytes[2] !== 0x33 || bytes[3] !== 0x3a)
+    return null;
+  const sep = bytes.indexOf(0x3a, 4);
+  if (sep < 0 || sep > 16) return null;
+  if (bytes.length - (sep + 1) > 200) return null;
+  const dec = new TextDecoder();
+  let from = dec.decode(bytes.slice(4, sep));
+  let body = dec.decode(bytes.slice(sep + 1));
+  from = Array.from(from, (c) => (c >= ' ' && c <= '~') ? c : '?').join('');
+  body = Array.from(body, (c) => c.charCodeAt(0) < 32 ? ' ' : c).join('');
+  return { from, text: body };
+}
+
+function parsePing(text) {
+  if (!text.startsWith(PING_PREFIX)) return null;
+  return { from: text.slice(PING_PREFIX.length) };
+}
+
+function logChat(from, text, outgoing, source) {
+  const div = document.createElement('div');
+  const meta = document.createElement('small');
+  const time = new Date().toLocaleTimeString();
+  meta.textContent =
+    `${time} ${outgoing ? '→' : '←'} ${from}` +
+    (source ? ` [${source}]` : '') + ': ';
+  const span = document.createElement('span');
+  span.textContent = text;
+  div.append(meta, span);
+  $('chatlog').appendChild(div);
+}
+
+function routeRxFrame(f, source) {
+  const chat = parseChat(f.text);
+  if (chat) { logChat(chat.from, chat.text, false, source); return; }
+  const ping = parsePing(f.text);
+  if (ping) { logChat(ping.from, '(ping)', false, source); return; }
+  logFrame(f.text, f.snr, source, f.ber, f.modBits);
+}
+
+const callsignValue = () => ($('callsign').value || 'WASM').trim();
+
+function updateChatFrame() {
+  if (!modem) return;
+  const payload = buildChatPayload(callsignValue(), $('chatmsg').value);
+  const bytes = new TextEncoder().encode(payload);
+  const framed = frameWithLength(bytes);
+  let cap = 0;
+  try { cap = modem.payloadSize(); } catch (e) { cap = 0; }
+  const shown = framed.subarray(0, Math.min(framed.length, 2 + 32));
+  let line =
+    `frame ${framed.length} B  |  len ${hex(framed.subarray(0, 2))} = ${bytes.length}  |  ` +
+    `payload ${hex(shown.subarray(2))}${framed.length > shown.length ? ' …' : ''}`;
+  if (cap > 0 && bytes.length > cap) {
+    const perFrag = cap - 5;
+    const nfrags = Math.max(1, Math.ceil(bytes.length / Math.max(1, perFrag)));
+    line += `  — ${bytes.length} B > ${cap} B/frame: fragmented into ${nfrags} (0xF3 headers)`;
+  }
+  $('chatframe').firstChild.textContent = line;
+}
+
+function sendLoopback(payload, kind) {
+  const pcm = modem.encode(payload);
+  if (kind === 'chat') {
+    const sent = parseChat(payload);
+    if (sent) logChat(sent.from, sent.text, true, 'tx');
+  } else if (kind === 'ping') {
+    const sent = parsePing(payload);
+    if (sent) logChat(sent.from, '(ping)', true, 'tx');
+  }
+  const stream = new Float32Array(LEAD_SILENCE + pcm.length + FLUSH_SILENCE);
+  stream.set(pcm, LEAD_SILENCE);
+  modem.reset();
+  const frames = modem.decode(stream);
+  $('chatinfo').textContent =
+    `${(pcm.length / SAMPLE_RATE).toFixed(2)} s · ${frames.length} frame(s) decoded`;
+  for (const f of frames) routeRxFrame(f, 'loop');
+  updateStats();
+}
+
+function chatLoopback() {
+  if (!applyConfig()) return;
+  sendLoopback(buildChatPayload(callsignValue(), $('chatmsg').value), 'chat');
+}
+
+function pingLoopback() {
+  if (!applyConfig()) return;
+  sendLoopback(PING_PREFIX + callsignValue(), 'ping');
+}
+
+function chatPlay() {
+  if (!applyConfig()) return;
+  const pcm = modem.encode(buildChatPayload(callsignValue(), $('chatmsg').value));
+  const c = ctx();
+  const buf = c.createBuffer(1, pcm.length, SAMPLE_RATE);
+  buf.copyToChannel(pcm, 0);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  src.connect(c.destination);
+  src.start();
+  $('chatinfo').textContent = `playing ${(pcm.length / SAMPLE_RATE).toFixed(2)} s of chat audio…`;
+  src.onended = () => { $('chatinfo').textContent = ''; };
+}
 
 
 function syncFamilyUI() {
@@ -266,6 +389,7 @@ function updateModeInfo() {
   } catch (e) {
     $('modeinfo').textContent = '';
   }
+  updateChatFrame();
 }
 
 
@@ -384,5 +508,12 @@ createModem73().then((mod) => {
   $('file').onchange = (e) => { decodeFile(e.target.files[0]); e.target.value = ''; };
   $('resetstats').onclick = resetStats;
   $('clear').onclick = () => { $('out').innerHTML = ''; };
+  $('chatloop').onclick = chatLoopback;
+  $('chatplay').onclick = chatPlay;
+  $('ping').onclick = pingLoopback;
+  $('chatclear').onclick = () => { $('chatlog').innerHTML = ''; };
+  $('chatmsg').oninput = updateChatFrame;
+  $('callsign').addEventListener('input', updateChatFrame);
+  updateChatFrame();
   note('');
 }).catch((e) => note('failed to load WASM module: ' + e));

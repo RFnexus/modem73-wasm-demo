@@ -82,6 +82,30 @@
 </fieldset>
 
 <fieldset>
+  <legend>Utilities</legend>
+  <p><small>
+    On-air bytes use the same framing as native modem73: every frame carries a
+    2-byte big-endian length prefix, and chat uses the
+    <code>M73:&lt;callsign&gt;:&lt;text&gt;</code> convention (ping uses
+    <code>PING:&lt;callsign&gt;</code>). Callsign comes from the Config box above.
+  </small></p>
+  <p>
+    <label>Chat message
+      <input id="chatmsg" size="48" value="Hello from MODEM73 over WebAssembly">
+    </label>
+  </p>
+  <p id="chatframe"><small></small></p>
+  <p>
+    <button id="chatloop" type="button">Send chat (loopback)</button>
+    <button id="chatplay" type="button">Play chat</button>
+    <button id="ping" type="button">Send ping (loopback)</button>
+    <span id="chatinfo"></span>
+  </p>
+  <div id="chatlog"></div>
+  <p><button id="chatclear" type="button">Clear chat</button></p>
+</fieldset>
+
+<fieldset>
   <legend>Link stats</legend>
   <div id="stats">no frames decoded yet</div>
   <p><button id="resetstats" type="button">Reset stats</button></p>
