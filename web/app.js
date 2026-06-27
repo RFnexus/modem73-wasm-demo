@@ -37,17 +37,6 @@ function note(msg) { $('status').textContent = msg; }
 const MSG_PREFIX = 'M73:';
 const PING_PREFIX = 'PING:';
 
-function frameWithLength(bytes) {
-  const out = new Uint8Array(2 + bytes.length);
-  out[0] = (bytes.length >> 8) & 0xff;
-  out[1] = bytes.length & 0xff;
-  out.set(bytes, 2);
-  return out;
-}
-
-const hex = (bytes) =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
-
 const buildChatPayload = (callsign, text) => MSG_PREFIX + callsign + ':' + text;
 
 function parseChat(text) {
@@ -81,7 +70,7 @@ function logChat(from, text, outgoing, source) {
   const span = document.createElement('span');
   span.textContent = text;
   div.append(meta, span);
-  $('chatlog').appendChild(div);
+  $('out').appendChild(div);
 }
 
 function routeRxFrame(f, source) {
@@ -94,66 +83,23 @@ function routeRxFrame(f, source) {
 
 const callsignValue = () => ($('callsign').value || 'WASM').trim();
 
-function updateChatFrame() {
-  if (!modem) return;
-  const payload = buildChatPayload(callsignValue(), $('chatmsg').value);
-  const bytes = new TextEncoder().encode(payload);
-  const framed = frameWithLength(bytes);
-  let cap = 0;
-  try { cap = modem.payloadSize(); } catch (e) { cap = 0; }
-  const shown = framed.subarray(0, Math.min(framed.length, 2 + 32));
-  let line =
-    `frame ${framed.length} B  |  len ${hex(framed.subarray(0, 2))} = ${bytes.length}  |  ` +
-    `payload ${hex(shown.subarray(2))}${framed.length > shown.length ? ' …' : ''}`;
-  if (cap > 0 && bytes.length > cap) {
-    const perFrag = cap - 5;
-    const nfrags = Math.max(1, Math.ceil(bytes.length / Math.max(1, perFrag)));
-    line += `  — ${bytes.length} B > ${cap} B/frame: fragmented into ${nfrags} (0xF3 headers)`;
-  }
-  $('chatframe').firstChild.textContent = line;
+function generateTone(freqHz, ms, amp = 0.8) {
+  const n = Math.max(0, Math.round(ms / 1000 * SAMPLE_RATE));
+  const out = new Float32Array(n);
+  const w = 2 * Math.PI * freqHz / SAMPLE_RATE;
+  for (let i = 0; i < n; i++) out[i] = amp * Math.sin(w * i);
+  return out;
 }
 
-function sendLoopback(payload, kind) {
-  const pcm = modem.encode(payload);
-  if (kind === 'chat') {
-    const sent = parseChat(payload);
-    if (sent) logChat(sent.from, sent.text, true, 'tx');
-  } else if (kind === 'ping') {
-    const sent = parsePing(payload);
-    if (sent) logChat(sent.from, '(ping)', true, 'tx');
-  }
-  const stream = new Float32Array(LEAD_SILENCE + pcm.length + FLUSH_SILENCE);
-  stream.set(pcm, LEAD_SILENCE);
-  modem.reset();
-  const frames = modem.decode(stream);
-  $('chatinfo').textContent =
-    `${(pcm.length / SAMPLE_RATE).toFixed(2)} s · ${frames.length} frame(s) decoded`;
-  for (const f of frames) routeRxFrame(f, 'loop');
-  updateStats();
-}
-
-function chatLoopback() {
-  if (!applyConfig()) return;
-  sendLoopback(buildChatPayload(callsignValue(), $('chatmsg').value), 'chat');
-}
-
-function pingLoopback() {
-  if (!applyConfig()) return;
-  sendLoopback(PING_PREFIX + callsignValue(), 'ping');
-}
-
-function chatPlay() {
-  if (!applyConfig()) return;
-  const pcm = modem.encode(buildChatPayload(callsignValue(), $('chatmsg').value));
-  const c = ctx();
-  const buf = c.createBuffer(1, pcm.length, SAMPLE_RATE);
-  buf.copyToChannel(pcm, 0);
-  const src = c.createBufferSource();
-  src.buffer = buf;
-  src.connect(c.destination);
-  src.start();
-  $('chatinfo').textContent = `playing ${(pcm.length / SAMPLE_RATE).toFixed(2)} s of chat audio…`;
-  src.onended = () => { $('chatinfo').textContent = ''; };
+function applyVox(pcm) {
+  if (!$('voxenable').checked) return pcm;
+  const lead = generateTone(parseFloat($('voxleadfreq').value) || 0, parseFloat($('voxleadms').value) || 0);
+  const tail = generateTone(parseFloat($('voxtailfreq').value) || 0, parseFloat($('voxtailms').value) || 0);
+  const out = new Float32Array(lead.length + pcm.length + tail.length);
+  out.set(lead, 0);
+  out.set(pcm, lead.length);
+  out.set(tail, lead.length + pcm.length);
+  return out;
 }
 
 
@@ -193,7 +139,9 @@ function ctx() {
 
 function encodeMessage() {
   if (!applyConfig()) return null;
-  const text = $('msg').value;
+  const text = $('rawpacket').checked
+    ? $('msg').value
+    : buildChatPayload(callsignValue(), $('msg').value);
   const max = modem.payloadSize();
   const nbytes = new TextEncoder().encode(text).length;
   if (nbytes > max)
@@ -228,14 +176,15 @@ function loopback() {
 function playAudio() {
   const pcm = encodeMessage();
   if (!pcm) return;
+  const out = applyVox(pcm);
   const c = ctx();
-  const buf = c.createBuffer(1, pcm.length, SAMPLE_RATE);
-  buf.copyToChannel(pcm, 0);
+  const buf = c.createBuffer(1, out.length, SAMPLE_RATE);
+  buf.copyToChannel(out, 0);
   const src = c.createBufferSource();
   src.buffer = buf;
   src.connect(c.destination);
   src.start();
-  note(`playing ${(pcm.length / SAMPLE_RATE).toFixed(2)} s of OFDM audio…`);
+  note(`playing ${(out.length / SAMPLE_RATE).toFixed(2)} s of audio…`);
   src.onended = () => note('');
 }
 
@@ -268,7 +217,8 @@ function encodeWav(pcm, sampleRate) {
 function exportWav() {
   const pcm = encodeMessage();
   if (!pcm) return;
-  const blob = encodeWav(pcm, SAMPLE_RATE);
+  const out = applyVox(pcm);
+  const blob = encodeWav(out, SAMPLE_RATE);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `modem73-${$('mod') && $('mod').value || 'audio'}.wav`.toLowerCase();
@@ -276,7 +226,7 @@ function exportWav() {
   a.click();
   a.remove();
   URL.revokeObjectURL(a.href);
-  note(`exported ${(pcm.length / SAMPLE_RATE).toFixed(2)} s WAV (${blob.size} bytes)`);
+  note(`exported ${(out.length / SAMPLE_RATE).toFixed(2)} s WAV (${blob.size} bytes)`);
 }
 
 
@@ -389,7 +339,6 @@ function updateModeInfo() {
   } catch (e) {
     $('modeinfo').textContent = '';
   }
-  updateChatFrame();
 }
 
 
@@ -508,12 +457,5 @@ createModem73().then((mod) => {
   $('file').onchange = (e) => { decodeFile(e.target.files[0]); e.target.value = ''; };
   $('resetstats').onclick = resetStats;
   $('clear').onclick = () => { $('out').innerHTML = ''; };
-  $('chatloop').onclick = chatLoopback;
-  $('chatplay').onclick = chatPlay;
-  $('ping').onclick = pingLoopback;
-  $('chatclear').onclick = () => { $('chatlog').innerHTML = ''; };
-  $('chatmsg').oninput = updateChatFrame;
-  $('callsign').addEventListener('input', updateChatFrame);
-  updateChatFrame();
   note('');
 }).catch((e) => note('failed to load WASM module: ' + e));

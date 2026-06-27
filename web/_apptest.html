@@ -104,5 +104,49 @@
 
 <script src="modem73.js"></script>
 <script src="app.js"></script>
+
+<div id="apptest">PENDING</div>
+<script>
+(function(){
+  const set=(s)=>{document.getElementById('apptest').textContent=s;};
+  let tries=0;
+  const iv=setInterval(()=>{
+    if (typeof modem==='undefined'||!modem){ if(++tries>400){clearInterval(iv);set('NO MODEM');} return; }
+    clearInterval(iv);
+    try{
+      const R=[];
+      const loop=(label,fam,mfskIdx,raw,msg)=>{
+        document.getElementById('family').value=fam; syncFamilyUI();
+        if(fam==='mfsk') document.getElementById('mfsk').value=String(mfskIdx);
+        document.getElementById('rawpacket').checked=raw;
+        document.getElementById('msg').value=msg;
+        document.getElementById('out').innerHTML='';
+        loopback();
+        const got=document.getElementById('out').textContent;
+        R.push(label+':'+(got.includes(msg)?'ok':'BAD'));
+      };
+      loop('OFDM-chat','ofdm',0,false,'Hi chat there');
+      loop('OFDM-raw','ofdm',0,true,'RawMsg123');
+      loop('MFSK32-chat','mfsk',2,false,'MfskHi');
+      loop('MFSK32R-raw','mfsk',3,true,'Mfsk32R raw');
+      // mfsk dropdown options
+      const opts=[...document.getElementById('mfsk').options].map(o=>o.value).join(',');
+      R.push('mfskopts='+opts);
+      // VOX wrapping length
+      document.getElementById('family').value='ofdm'; syncFamilyUI();
+      document.getElementById('rawpacket').checked=false;
+      document.getElementById('msg').value='vox test';
+      document.getElementById('voxenable').checked=false;
+      const base=encodeMessage().length;
+      document.getElementById('voxenable').checked=true;
+      document.getElementById('voxleadms').value='100';
+      document.getElementById('voxtailms').value='100';
+      const wrapped=applyVox(encodeMessage()).length;
+      R.push('vox='+(wrapped===base+9600?'ok':('BAD '+base+'->'+wrapped)));
+      set('DONE '+R.join('  '));
+    }catch(e){ set('EXC '+e.message+' @@ '+(e.stack||'').split('\n').slice(0,2).join(' | ')); }
+  },50);
+})();
+
 </body>
 </html>
